@@ -1,0 +1,253 @@
+# ============================================================
+#  Emerge Project — Protein Language Model Configuration
+#  所有超参数统一在此修改，代码中不硬编码任何关键数值
+# ============================================================
+
+# ---- 数据 --------------------------------------------------
+data:
+  # UniProt taxonomy IDs
+  # 细菌: 2  真菌: 4751  人类(评估): 9606
+  train_taxa:
+    - id: 2
+      name: "Bacteria"
+    - id: 4751
+      name: "Fungi"
+  eval_taxa:
+    - id: 9606
+      name: "Human"
+
+  # 每个物种最多下载的序列数（None = 全量，建议先用小数据调试）
+  max_seqs_per_taxon: 50000
+
+  # 序列长度过滤（残基数）
+  min_seq_len: 50
+  max_seq_len: 512
+
+  # 数据目录
+  raw_dir: "data/raw"
+  processed_dir: "data/processed"
+
+  # 训练/验证划分比例
+  val_ratio: 0.05
+
+  # DataLoader
+  num_workers: 4       # 服务器可调高
+  pin_memory: true
+
+# ---- 分词器 ------------------------------------------------
+tokenizer:
+  # 20种标准氨基酸 + 特殊token
+  # 特殊token: [PAD]=0 [UNK]=1 [CLS]=2 [EOS]=3 [MASK]=4
+  mask_prob: 0.15          # MLM掩码比例
+  mask_token_prob: 0.80    # 掩码位置用[MASK]替换的概率
+  random_token_prob: 0.10  # 掩码位置用随机token替换的概率
+  # 其余10%保持原token不变
+
+# ---- 模型 --------------------------------------------------
+model:
+  # 预设规格: tiny / small / medium / large (对应不同参数量)
+  # RTX 4060 (8GB): 建议 small 或 medium(开梯度检查点)
+  preset: "small"
+
+  # 也可手动覆盖每个参数（会忽略preset）
+  # override: true
+  # hidden_dim: 256
+  # num_layers: 6
+  # num_heads: 8
+  # ffn_dim: 1024
+  # dropout: 0.1
+  # max_position: 512
+
+  # 预设规格对照表（供参考，不需修改）
+  presets:
+    tiny:
+      hidden_dim: 128
+      num_layers: 4
+      num_heads: 4
+      ffn_dim: 512
+      dropout: 0.1
+      max_position: 512
+      approx_params: "~3M"
+    small:
+      hidden_dim: 256
+      num_layers: 6
+      num_heads: 8
+      ffn_dim: 1024
+      dropout: 0.1
+      max_position: 512
+      approx_params: "~16M"
+    medium:
+      hidden_dim: 512
+      num_layers: 12
+      num_heads: 16
+      ffn_dim: 2048
+      dropout: 0.1
+      max_position: 512
+      approx_params: "~85M"
+    large:
+      hidden_dim: 1024
+      num_layers: 24
+      num_heads: 16
+      ffn_dim: 4096
+      dropout: 0.1
+      max_position: 512
+      approx_params: "~340M"
+
+# ---- 训练 --------------------------------------------------
+training:
+  # 基础设置
+  seed: 42
+  max_epochs: 50
+  batch_size: 32           # 显存不够时调小；服务器可调大
+  gradient_accumulation: 4 # 等效batch_size = batch_size * grad_accum
+
+  # 优化器
+  optimizer: "adamw"
+  lr: 1.0e-4
+  weight_decay: 0.01
+  beta1: 0.9
+  beta2: 0.999
+  eps: 1.0e-8
+  max_grad_norm: 1.0
+
+  # 学习率调度
+  scheduler: "cosine_warmup"
+  warmup_steps: 2000
+
+  # 混合精度（RTX 4060支持bf16；服务器A100/H100也支持）
+  precision: "bf16"        # "fp32" / "fp16" / "bf16"
+
+  # 梯度检查点（牺牲速度换显存，medium/large模型建议开启）
+  gradient_checkpointing: false  # small preset下关闭
+
+  # 检查点保存
+  save_dir: "outputs/checkpoints"
+  save_every_n_epochs: 5
+  keep_top_k: 3            # 只保留最好的k个ckpt
+
+  # 日志
+  log_dir: "outputs/logs"
+  log_every_n_steps: 50
+  use_wandb: false         # 设为true并填写wandb_project可启用W&B
+  wandb_project: "emerge-protein-lm"
+
+  # 早停
+  early_stopping: true
+  patience: 5              # 验证集多少个epoch没提升就停止
+
+# ---- 评估 --------------------------------------------------
+evaluation:
+  # 评估时使用的checkpoint（null = 最新best）
+  checkpoint: null
+
+  # 涌现分析设置
+  emergence:
+    # 涌现对比基线
+    baselines:
+      - "random_init"       # 随机初始化模型（下界）
+      - "shuffled_train"    # 用打乱序列训练的模型
+
+    # 表示分析
+    repr_analysis:
+      n_samples: 2000       # 用于t-SNE/UMAP的样本数
+      method: "umap"        # "tsne" / "umap"
+      layer_indices: [-1]   # 取哪些层的表示，-1=最后一层
+
+    # 涌现打分指标
+    metrics:
+      - "mlm_accuracy"      # 掩码位置预测准确率
+      - "perplexity"        # 困惑度
+      - "amino_acid_freq"   # 氨基酸频率分布相似度
+      - "contact_pred"      # 注意力图 -> 接触图预测（需PDB参考）
+
+  output_dir: "outputs/figures"
+
+# ---- 涌现 Scaling Experiment ------------------------------------
+scaling_experiment:
+  # 全局每类群下载序列数
+  seqs_per_taxon: 10000
+
+  # 特殊处理：某些类群下载量减半（stage5 的节肢+线虫合计 10K）
+  seqs_overrides:
+    arthropoda: 5000
+    nematoda: 5000
+
+  # 人类评估集大小
+  human_eval_seqs: 5000
+
+  # 每个阶段最多训练轮数（early stopping会提前停止）
+  max_epochs: 50
+
+  # 验证集比例（用于早停判断）
+  val_ratio: 0.1
+
+  # 早停：验证集loss多少个epoch无提升则停止
+  patience: 5
+
+  # 输出目录
+  output_dir: "outputs/scaling"
+
+  # 人类蛋白质评估文件（下载后自动生成）
+  human_fasta: "data/processed/human_9606.fasta"
+
+  # 6个阶段：按进化阶元递进，每阶段新增一个类群
+  stages:
+    - name: "stage1"
+      display: "Bacteria"
+      species:
+        - {id: 2, name: "bacteria", label: "细菌"}
+
+    - name: "stage2"
+      display: "+ Archaea"
+      species:
+        - {id: 2, name: "bacteria", label: "细菌"}
+        - {id: 2157, name: "archaea", label: "古菌"}
+
+    - name: "stage3"
+      display: "+ Fungi ★"
+      species:
+        - {id: 2, name: "bacteria", label: "细菌"}
+        - {id: 2157, name: "archaea", label: "古菌"}
+        - {id: 4751, name: "fungi", label: "真菌"}
+
+    - name: "stage4"
+      display: "+ Plants"
+      species:
+        - {id: 2, name: "bacteria", label: "细菌"}
+        - {id: 2157, name: "archaea", label: "古菌"}
+        - {id: 4751, name: "fungi", label: "真菌"}
+        - {id: 33090, name: "plants", label: "植物"}
+
+    - name: "stage5"
+      display: "+ Invertebrates ★"
+      species:
+        - {id: 2, name: "bacteria", label: "细菌"}
+        - {id: 2157, name: "archaea", label: "古菌"}
+        - {id: 4751, name: "fungi", label: "真菌"}
+        - {id: 33090, name: "plants", label: "植物"}
+        - {id: 6656, name: "arthropoda", label: "节肢动物"}
+        - {id: 6231, name: "nematoda", label: "线虫"}
+
+    - name: "stage6"
+      display: "+ Rodents ★★"
+      species:
+        - {id: 2, name: "bacteria", label: "细菌"}
+        - {id: 2157, name: "archaea", label: "古菌"}
+        - {id: 4751, name: "fungi", label: "真菌"}
+        - {id: 33090, name: "plants", label: "植物"}
+        - {id: 6656, name: "arthropoda", label: "节肢动物"}
+        - {id: 6231, name: "nematoda", label: "线虫"}
+        - {id: 9989, name: "rodentia", label: "啮齿类"}
+
+  # 人类评估物种
+  human_species:
+    id: 9606
+    name: "human"
+    label: "人类"
+
+# ---- 硬件 --------------------------------------------------
+hardware:
+  # 自动检测；也可手动指定
+  device: "auto"           # "auto" / "cuda" / "cpu"
+  gpu_ids: [0]             # 多GPU时填写ID列表，单机单卡填[0]
+  compile_model: false     # torch.compile，PyTorch>=2.0，服务器可开

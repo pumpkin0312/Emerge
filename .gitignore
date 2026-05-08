@@ -1,0 +1,34 @@
+# 数据文件
+data/raw/
+data/processed/
+
+# 模型输出
+outputs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+
+# Conda / 虚拟环境
+.env
+*.egg
+
+# Jupyter
+.ipynb_checkpoints/
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 参考文献PDF
+article/
+
+# IDE
+.vscode/
+.idea/
+.claude/
+
+# 压缩包
+*.zip
