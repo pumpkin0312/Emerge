@@ -20,11 +20,13 @@ class ProteinDataset(Dataset):
         max_len:     int  = 512,
         mode:        str  = "train",  # "train" | "eval"
         shuffle_seqs: bool = False,   # for shuffled-sequence baseline
+        random_window: bool = False,  # 随机子窗口采样（避免 N 端偏置，仅小窗口实验需要）
     ):
-        self.tokenizer   = tokenizer
-        self.max_len     = max_len
-        self.mode        = mode
+        self.tokenizer    = tokenizer
+        self.max_len      = max_len
+        self.mode         = mode
         self.shuffle_seqs = shuffle_seqs
+        self.random_window= random_window
 
         self.sequences: list[str] = []
         for path in fasta_paths:
@@ -40,6 +42,13 @@ class ProteinDataset(Dataset):
         seq = self.sequences[idx]
         if self.shuffle_seqs:
             seq = _shuffle_seq(seq)
+
+        # 随机窗口采样：仅当序列长度超过窗口、且开启 random_window 时生效
+        # 保留 2 个位置给 CLS / EOS
+        inner_max = self.max_len - 2
+        if self.random_window and len(seq) > inner_max:
+            start = random.randint(0, len(seq) - inner_max)
+            seq = seq[start : start + inner_max]
 
         ids = self.tokenizer.encode(seq, add_special_tokens=True)
         ids = ids[: self.max_len]

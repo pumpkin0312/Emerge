@@ -274,12 +274,13 @@ def run_stage(
         seqs_overrides = exp_cfg.get("seqs_overrides", {}),
     )
 
-    # 数据集
+    # 数据集（开启 random_window：对大窗口 512 几乎无影响，对小窗口避免 N 端偏置）
     dataset = ProteinDataset(
-        fasta_paths = fasta_paths,
-        tokenizer   = tokenizer,
-        max_len     = data_cfg["max_seq_len"],
-        mode        = "train",
+        fasta_paths   = fasta_paths,
+        tokenizer     = tokenizer,
+        max_len       = data_cfg["max_seq_len"],
+        mode          = "train",
+        random_window = True,
     )
     logger.info(f"  Total sequences: {len(dataset)}")
 
@@ -433,6 +434,10 @@ def main():
     parser.add_argument("--max-stages",     type=int, default=None, help="只跑前N个阶段（用于快速验证）")
     parser.add_argument("--dry-run-epochs", type=int, default=None, help="覆盖训练epoch数（用于快速验证）")
     parser.add_argument("--download-only",  action="store_true", help="只下载所有阶段+人类数据后退出（用于离线服务器准备）")
+    parser.add_argument("--window-size",    type=int, default=None,
+                        help="覆盖 data.max_seq_len 和 model.max_position（窗口大小对比实验）")
+    parser.add_argument("--output-suffix",  type=str, default=None,
+                        help="改写输出目录为 outputs/scaling_<suffix>/（用于多实验隔离）")
     args = parser.parse_args()
 
     cfg         = load_config(args.config)
@@ -443,9 +448,21 @@ def main():
     data_cfg    = cfg["data"]
     hw_cfg      = cfg["hardware"]
 
+    # ---- CLI 覆盖：窗口大小 ----
+    if args.window_size:
+        data_cfg["max_seq_len"]    = args.window_size
+        model_cfg["max_position"]  = args.window_size
+        logger.info(f"[CLI override] window-size → {args.window_size}  "
+                    f"(data.max_seq_len + model.max_position)")
+
+    # ---- CLI 覆盖：输出目录 ----
+    if args.output_suffix:
+        exp_cfg["output_dir"] = f"outputs/scaling_{args.output_suffix}"
+        logger.info(f"[CLI override] output_dir → {exp_cfg['output_dir']}")
+
     out_dir = Path(exp_cfg["output_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
-    Path("outputs/scaling").mkdir(parents=True, exist_ok=True)
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
 
     # 设备
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -516,11 +533,14 @@ def main():
         logger.info("All data downloaded. Exiting (use --skip-download to train).")
         return
 
+    # 人类评估集：也启用 random_window 保证小窗口实验下评估覆盖蛋白全长
+    # （MLM 掩码本就随机，再叠加 random window 噪音可控）
     human_ds = ProteinDataset(
-        fasta_paths = human_paths,
-        tokenizer   = tokenizer,
-        max_len     = data_cfg["max_seq_len"],
-        mode        = "train",
+        fasta_paths   = human_paths,
+        tokenizer     = tokenizer,
+        max_len       = data_cfg["max_seq_len"],
+        mode          = "train",
+        random_window = True,
     )
     human_dl = DataLoader(
         human_ds,
