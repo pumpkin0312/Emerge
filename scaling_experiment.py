@@ -78,14 +78,16 @@ def prepare_species_data(
     for sp in species_list:
         proc_path = proc_dir / f"{sp['name']}_{sp['id']}.fasta"
         n_target  = seqs_overrides.get(sp["name"], seqs_per_taxon)
+        exclude_id = sp.get("exclude_id")
         if not proc_path.exists():
             raw_path = download_taxon(
-                taxon_id   = sp["id"],
-                taxon_name = sp["name"],
-                out_dir    = raw_dir,
-                max_seqs   = int(n_target * 1.5),  # 多下一些，过滤后保留目标数量
-                min_len    = min_len,
-                max_len    = max_len,
+                taxon_id         = sp["id"],
+                taxon_name       = sp["name"],
+                out_dir          = raw_dir,
+                max_seqs         = int(n_target * 1.5),  # 多下一些，过滤后保留目标数量
+                min_len          = min_len,
+                max_len          = max_len,
+                exclude_taxon_id = exclude_id,
             )
             kept = filter_fasta(raw_path, proc_path, min_len, max_len, n_target)
             logger.info(f"  {sp['label']}: {kept}/{n_target} sequences saved → {proc_path}")
@@ -256,7 +258,7 @@ def run_stage(
     result_path = out_dir / f"{stage_name}_result.json"
     if result_path.exists():
         logger.info(f"  Already completed, loading cached result.")
-        with open(result_path) as f:
+        with open(result_path, encoding="utf-8") as f:
             return json.load(f)
 
     # 准备数据
@@ -347,17 +349,26 @@ def plot_emergence_curve(results: list[dict], out_dir: Path) -> None:
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
     fig.suptitle("Scaling Experiment — Emergence Analysis", fontsize=13, fontweight="bold")
 
+    # 按 stage 顺序对应的"是否动物界" —— 用于上色分界
+    # 当前 6 stage：1=细菌 2=古菌 3=真菌 4=植物 5=无脊椎 6=啮齿
+    # 前 4 = 非动物，后 2 = 动物
+    n_nonanimal = 4
+    animal_start_n = n_species[n_nonanimal] if n_nonanimal < len(n_species) else None
+
     # ---- 左图：准确率曲线 ----
     ax = axes[0]
     ax.plot(n_species, acc_trained, "o-", color="#4C72B0", linewidth=2,
             markersize=8, label="Trained model (human)")
     ax.plot(n_species, acc_random,  "s--", color="#DD8452", linewidth=1.5,
             markersize=6, label="Random init (baseline)")
-    ax.axvline(x=4, color="gray", linestyle=":", alpha=0.7)
-    ax.text(4.05, max(acc_trained) * 0.5, "<- First fungus", fontsize=9, color="gray")
-    ax.set_xlabel("Number of training species", fontsize=11)
+    if animal_start_n is not None:
+        boundary = (n_species[n_nonanimal-1] + animal_start_n) / 2
+        ax.axvline(x=boundary, color="gray", linestyle=":", alpha=0.7)
+        ax.text(boundary + 0.05, min(acc_trained) + (max(acc_trained)-min(acc_trained))*0.1,
+                "<- Animals added", fontsize=9, color="gray")
+    ax.set_xlabel("Number of training taxa", fontsize=11)
     ax.set_ylabel("Human protein MLM accuracy", fontsize=11)
-    ax.set_title("MLM Accuracy vs. Training Species", fontsize=11)
+    ax.set_title("MLM Accuracy vs. Training Taxa", fontsize=11)
     ax.set_xticks(n_species)
     ax.set_xticklabels([str(n) for n in n_species], fontsize=9)
     ax.legend()
@@ -366,10 +377,11 @@ def plot_emergence_curve(results: list[dict], out_dir: Path) -> None:
     # ---- 右图：困惑度曲线 ----
     ax = axes[1]
     ax.plot(n_species, ppl_trained, "o-", color="#55A868", linewidth=2, markersize=8)
-    ax.axvline(x=4, color="gray", linestyle=":", alpha=0.7)
-    ax.set_xlabel("Number of training species", fontsize=11)
+    if animal_start_n is not None:
+        ax.axvline(x=boundary, color="gray", linestyle=":", alpha=0.7)
+    ax.set_xlabel("Number of training taxa", fontsize=11)
     ax.set_ylabel("Perplexity (lower is better)", fontsize=11)
-    ax.set_title("Perplexity vs. Training Species", fontsize=11)
+    ax.set_title("Perplexity vs. Training Taxa", fontsize=11)
     ax.set_xticks(n_species)
     ax.set_xticklabels([str(n) for n in n_species], fontsize=9)
     ax.grid(alpha=0.3)
@@ -386,19 +398,21 @@ def plot_emergence_curve(results: list[dict], out_dir: Path) -> None:
         (t - r) / (r + 1e-9)
         for t, r in zip(acc_trained, acc_random)
     ]
-    colors = ["#4C72B0" if i < 3 else "#DD8452" for i in range(len(improvements))]
+    colors = ["#4C72B0" if i < n_nonanimal else "#DD8452" for i in range(len(improvements))]
     ax.bar(n_species, improvements, color=colors, edgecolor="white", width=0.6)
-    ax.axvline(x=3.5, color="gray", linestyle="--", alpha=0.6)
-    ax.text(3.6, max(improvements) * 0.9, "Bacteria->Fungi", fontsize=9, color="gray")
-    ax.set_xlabel("Number of training species", fontsize=11)
+    if animal_start_n is not None:
+        ax.axvline(x=boundary, color="gray", linestyle="--", alpha=0.6)
+        ax.text(boundary + 0.05, max(improvements) * 0.95,
+                "Non-animal -> Animal", fontsize=9, color="gray")
+    ax.set_xlabel("Number of training taxa", fontsize=11)
     ax.set_ylabel("Relative improvement over random baseline", fontsize=11)
     ax.set_title("Emergence Score per Stage", fontsize=11)
     ax.set_xticks(n_species)
     ax.set_xticklabels([str(n) for n in n_species], fontsize=9)
     ax.grid(axis="y", alpha=0.3)
     patches = [
-        mpatches.Patch(color="#4C72B0", label="Bacteria stages"),
-        mpatches.Patch(color="#DD8452", label="Fungi stages"),
+        mpatches.Patch(color="#4C72B0", label="Non-animal taxa"),
+        mpatches.Patch(color="#DD8452", label="Animal taxa"),
     ]
     ax.legend(handles=patches)
     plt.tight_layout()
@@ -418,6 +432,7 @@ def main():
     parser.add_argument("--plot-only",      action="store_true")
     parser.add_argument("--max-stages",     type=int, default=None, help="只跑前N个阶段（用于快速验证）")
     parser.add_argument("--dry-run-epochs", type=int, default=None, help="覆盖训练epoch数（用于快速验证）")
+    parser.add_argument("--download-only",  action="store_true", help="只下载所有阶段+人类数据后退出（用于离线服务器准备）")
     args = parser.parse_args()
 
     cfg         = load_config(args.config)
@@ -451,7 +466,7 @@ def main():
         for stage in exp_cfg["stages"]:
             rp = out_dir / f"{stage['name']}_result.json"
             if rp.exists():
-                with open(rp) as f:
+                with open(rp, encoding="utf-8") as f:
                     results.append(json.load(f))
         if not results:
             logger.error("No stage results found. Run the experiment first.")
@@ -477,6 +492,29 @@ def main():
         )
     else:
         human_paths = [proc_dir / f"{human_sp['name']}_{human_sp['id']}.fasta"]
+
+    # ---- 仅下载模式：把所有阶段需要的数据全下完后退出 ----
+    if args.download_only:
+        logger.info("=== Download-only mode: collecting all unique taxa across stages ===")
+        seen, all_taxa = set(), []
+        for stage in exp_cfg["stages"]:
+            for sp in stage["species"]:
+                if sp["id"] not in seen:
+                    seen.add(sp["id"])
+                    all_taxa.append(sp)
+        logger.info(f"  {len(all_taxa)} unique taxa to download: "
+                    f"{[s['label'] for s in all_taxa]}")
+        prepare_species_data(
+            species_list   = all_taxa,
+            seqs_per_taxon = exp_cfg["seqs_per_taxon"],
+            raw_dir        = raw_dir,
+            proc_dir       = proc_dir,
+            min_len        = data_cfg["min_seq_len"],
+            max_len        = data_cfg["max_seq_len"],
+            seqs_overrides = exp_cfg.get("seqs_overrides", {}),
+        )
+        logger.info("All data downloaded. Exiting (use --skip-download to train).")
+        return
 
     human_ds = ProteinDataset(
         fasta_paths = human_paths,

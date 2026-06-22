@@ -47,7 +47,10 @@ tokenizer:
 model:
   # 预设规格: tiny / small / medium / large (对应不同参数量)
   # RTX 4060 (8GB): 建议 small 或 medium(开梯度检查点)
-  preset: "small"
+  preset: "medium"
+
+  # 梯度检查点：medium/large 模型在 8GB 显存下必须开启
+  gradient_checkpointing: true
 
   # 也可手动覆盖每个参数（会忽略preset）
   # override: true
@@ -98,8 +101,8 @@ training:
   # 基础设置
   seed: 42
   max_epochs: 50
-  batch_size: 32           # 显存不够时调小；服务器可调大
-  gradient_accumulation: 4 # 等效batch_size = batch_size * grad_accum
+  batch_size: 8            # medium 模型 + 8GB 显存：必须降到 8
+  gradient_accumulation: 16 # 等效batch_size = 8 * 16 = 128
 
   # 优化器
   optimizer: "adamw"
@@ -117,8 +120,7 @@ training:
   # 混合精度（RTX 4060支持bf16；服务器A100/H100也支持）
   precision: "bf16"        # "fp32" / "fp16" / "bf16"
 
-  # 梯度检查点（牺牲速度换显存，medium/large模型建议开启）
-  gradient_checkpointing: false  # small preset下关闭
+  # 梯度检查点已移到 model: 段（小代码 bug：之前放这里实际未生效）
 
   # 检查点保存
   save_dir: "outputs/checkpoints"
@@ -238,6 +240,31 @@ scaling_experiment:
         - {id: 6656, name: "arthropoda", label: "节肢动物"}
         - {id: 6231, name: "nematoda", label: "线虫"}
         - {id: 9989, name: "rodentia", label: "啮齿类"}
+
+    - name: "stage7"
+      display: "+ Cetartiodactyla"
+      species:
+        - {id: 2, name: "bacteria", label: "细菌"}
+        - {id: 2157, name: "archaea", label: "古菌"}
+        - {id: 4751, name: "fungi", label: "真菌"}
+        - {id: 33090, name: "plants", label: "植物"}
+        - {id: 6656, name: "arthropoda", label: "节肢动物"}
+        - {id: 6231, name: "nematoda", label: "线虫"}
+        - {id: 9989, name: "rodentia", label: "啮齿类"}
+        - {id: 91561, name: "cetartiodactyla", label: "鲸偶蹄目"}
+
+    - name: "stage8"
+      display: "+ Primates (non-human) ★★★"
+      species:
+        - {id: 2, name: "bacteria", label: "细菌"}
+        - {id: 2157, name: "archaea", label: "古菌"}
+        - {id: 4751, name: "fungi", label: "真菌"}
+        - {id: 33090, name: "plants", label: "植物"}
+        - {id: 6656, name: "arthropoda", label: "节肢动物"}
+        - {id: 6231, name: "nematoda", label: "线虫"}
+        - {id: 9989, name: "rodentia", label: "啮齿类"}
+        - {id: 91561, name: "cetartiodactyla", label: "鲸偶蹄目"}
+        - {id: 9443, name: "primates_nonhuman", label: "灵长目(非人)", exclude_id: 9606}
 
   # 人类评估物种
   human_species:

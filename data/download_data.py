@@ -35,6 +35,7 @@ def download_taxon(
     max_seqs: int | None = None,
     min_len: int = 50,
     max_len: int = 512,
+    exclude_taxon_id: int | None = None,
 ) -> Path:
     out_path = out_dir / f"{taxon_name.lower()}_{taxon_id}.fasta"
     if out_path.exists():
@@ -42,6 +43,8 @@ def download_taxon(
         return out_path
 
     query = f"taxonomy_id:{taxon_id} AND reviewed:true AND length:[{min_len} TO {max_len}]"
+    if exclude_taxon_id is not None:
+        query += f" AND NOT taxonomy_id:{exclude_taxon_id}"
     size  = min(500, max_seqs) if max_seqs else 500
 
     params = {
